@@ -1,0 +1,841 @@
+---
+title: "NIH Aging Data Exploration"
+author: "Ben A. Flanagan"
+date: "1/10/2018: updated 2/28/2018: updated Sys.Date()"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+### Notes:
+
+There are a few issues with these data. How are we going to deal with the sampling at the various time points? I could imagine subtracting the number sampled from the total at day 28 and all subsequent counts to develop proportions. That may be the most conservative approach, but I am still unsure. I am still fishing for ideas as how to deal with the sampling artifact. 
+
+In the following analyses, I used ALL data; not just crosses deemed 'usable'. 
+
+```{r setup, include=FALSE}
+library(dplyr); library(reshape2); library(ggplot2); library(survival); library(ranger); library(survival); library(ggfortify); library(survminer); library(ggsignif)
+rm(list = ls())
+std <- function(x) sd(x)/sqrt(length(x))
+
+
+fe_dat <- read.csv("~/Documents/phd/NIH/longevity/data/NIH_hatching_baf_sheet.csv")
+dat<-read.csv("/Users/benjaminflanagan/Documents/phd/NIH/NIH_data_final_melt.csv") # likely errors propgotaing though data as 0s
+dat$pops <- substr(dat$cross,start = 0,stop = 2)
+dat$day <- as.numeric(substr(dat$day,start = 2,stop = 10))+28
+
+
+datmast <- 
+  dat %>% 
+    group_by(day, cross, clutch, sex) %>%
+      filter(!any(num_alive=="NA")) ### filters within each day, cross, clutch and sex to find NAs and removes
+
+datmast_use <- subset(datmast, usability=="usable")
+```
+
+
+
+```{r usability check, echo=FALSE}
+
+dat2<-subset(datmast,day==28 & clutch == 1 & sex == "m") ### to generate one row for each cross
+
+print(table(dat2$pops))
+print(table(dat2$usability, dat2$pops)) # current summary 
+
+```
+
+
+## Sex ratio 
+
+For the following plots I removed any specific sex within a clutch at a given day where we had no data.  
+
+Below are sex specific counts and sex ratio wrapped over days. 
+
+
+
+
+```{r sex ratio all, echo=FALSE, message=FALSE, warning=FALSE}
+d28 <- subset(datmast, day==28)
+
+ggplot(d28, aes(x=pops, y=num_alive, fill=sex)) + geom_boxplot() +
+    #facet_grid(~Group, scales="free", space="free_x") +
+  geom_signif(vjust=0.7,
+              textsize=10,
+              size=1)
+
+ggboxplot(d28, x="sex", y="num_alive", fill="sex", facet.by = "pops") +
+  stat_compare_means(aes(group = sex), label = "p.format") +
+  theme_linedraw() +
+  ylab("Count per Clutch")+
+  xlab("Sex")+
+  guides(color=guide_legend(title=c("Sex"))) +
+  theme(text=element_text(face="bold", size=20),
+        strip.background = element_rect(fill="white"))+
+  theme(strip.text = element_text(colour = 'black')) 
+
+
+ggplot(datmast, aes(x=pops,y=as.numeric(num_alive), fill=sex))+
+  geom_boxplot()+ 
+  theme_linedraw() +
+  facet_wrap(~day)+
+  guides(fill=guide_legend(title=c("Sex")))+
+  theme(text=element_text(face="bold", size=20))+
+  ylab("Count per Clutch")+
+  xlab("Cross")+
+  ggtitle("All")
+
+tot1 <-
+  datmast %>% group_by(sex,pops,day)  %>%
+  summarise(total=sum(num_alive))
+
+tot2 <-
+  datmast %>% group_by(day,pops) %>%
+  summarise(total2=sum(num_alive))
+
+propmast<-full_join(tot1,tot2)
+propmast$sex_ratio<-propmast$total/propmast$total2
+
+ggplot(subset(propmast, day==28), aes(x=pops, y=sex_ratio, fill=sex)) +
+  geom_col() + 
+  theme_linedraw() +
+  ylab("Proportion")+
+  xlab("Cross")+
+  guides(fill=guide_legend(title=c("Sex")))+
+  theme(text=element_text(face="bold", size=20))+
+  ylim(c(0,1))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("All")
+
+
+ 
+ggplot(subset(propmast), aes(x=pops, y=sex_ratio, fill=sex)) + 
+  geom_col()+
+  theme_linedraw() +
+  facet_wrap(~day)+
+  ylab("Proportion")+
+  xlab("Cross")+
+  guides(fill=guide_legend(title=c("Sex")))+
+  theme(text=element_text(face="bold", size=20))+
+  theme(text=element_text(face="bold", size=20))+
+  ylim(c(0,1))+
+  ggtitle("All")
+
+```
+
+
+```{r sex ratio usable, echo=F,  message=FALSE, warning=FALSE, eval=FALSE}
+
+ggplot(subset(datmast_use, day==28), aes(x=pops,y=as.numeric(num_alive), color=sex))+
+  geom_boxplot()+
+  ylab("Count per Clutch")+
+  xlab("Cross")+
+  theme(text=element_text(face="bold", size=20)) +
+  ggtitle("Usable")+
+  guides(color=guide_legend(title=c("Sex")))+
+  theme(text=element_text(face="bold", size=20))
+
+ggplot(datmast_use, aes(x=pops,y=as.numeric(num_alive), color=sex))+
+  geom_boxplot()+
+  facet_wrap(~day)+
+  ylab("Count per Clutch")+
+  xlab("Cross")+
+  ggtitle("Usable")
+
+
+
+tot1_use <-
+  datmast_use %>% group_by(day,pops,sex)  %>%
+  summarise(total=sum(num_alive))
+
+
+tot2_use <-
+  datmast_use %>% group_by(day,pops) %>%
+  summarise(total2=sum(num_alive))
+
+propmast_use<-full_join(tot1_use,tot2_use)
+propmast_use$sex_ratio<-propmast_use$total/propmast_use$total2
+
+ggplot(subset(propmast_use, day==28), aes(x=pops, y=sex_ratio, color=sex, fill=sex)) + 
+  geom_col()+
+  ylab("Proportion")+
+  xlab("Cross")+
+  ylim(c(0,1))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("Usable")
+
+ggplot(subset(propmast_use), aes(x=pops, y=sex_ratio, color=sex, fill=sex)) + 
+  geom_col()+
+  facet_wrap(~day)+
+  ylab("Proportion")+
+  xlab("Cross")+
+  ylim(c(0,1))+
+  ggtitle("Usable")
+
+```
+
+
+```{r heterotic productivyt, echo=FALSE, warning=FALSE}
+
+ggplot(subset(datmast, day==28), aes(x=pops,y=as.numeric(num_alive)))+
+  geom_boxplot() + 
+  theme_linedraw() +
+  ylab("Count per Clutch")+
+  xlab("Cross")+
+  guides(fill=guide_legend(title=c("Sex")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("All")
+
+tmp <- subset(datmast, day == 28)
+
+tmp$parental <- ifelse(tmp$pops == "FF" , "Parental", "Hybrid")
+tmp$parental <- ifelse(tmp$pops == "SS" , "Parental", tmp$parental)
+tmp$num_alive <- as.numeric(tmp$num_alive)
+
+ggplot(tmp, aes(x = parental, y = num_alive, fill = parental, group = parental)) +
+  geom_boxplot(fill=c("#E69F00", "#56B4E9"), color="black") +
+  geom_signif(comparisons = list(c("Parental","Hybrid")), map_signif_level = FALSE, position = "identity", textsize = 7) + 
+  theme_linedraw() +
+  ylab("Count per Clutch") +
+  xlab("Cross") +
+  guides(fill=FALSE) +
+  ylim(c(0,80))+
+  theme(text=element_text(face="bold", size=20))
+
+t.test(subset(tmp, parental=="Parental")$num_alive, subset(tmp, parental=="Hybrid")$num_alive)
+
+```
+
+
+
+## Survival plots
+
+The following are using all raw data. Again missing data for number alive was removed. All proprotions relevant to total alive at day 28. I have marked the weeks where samples were taken (49-56 & 105-112).
+
+```{r survival plots, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+tot1 <-
+  dat %>% group_by(day,pops,sex)  %>%
+  summarise(total=sum(na.omit(num_alive)))
+
+tot2 <-
+  dat %>% group_by(day,pops) %>%
+  summarise(total2=sum(na.omit(num_alive)))
+
+tot3<-tot1[tot1$day==28,]
+colnames(tot3)[4]<-"total_d28"
+
+propmast_long_sex<-merge(tot3,tot1, by = c("sex", "pops"))
+propmast_long_sex$day.x <- NULL
+colnames(propmast_long_sex)[4]<-"day"
+propmast_long_sex$prop_alive<-propmast_long_sex$total/propmast_long_sex$total_d28 ### data frame by sex
+propmast_long_sex[, ncol(propmast_long_sex)][propmast_long_sex[, ncol(propmast_long_sex)] == 0] <- NA
+
+tot4<-tot2[tot2$day==28,]
+colnames(tot4)[3]<-"total_d28"
+
+propmast_long<-merge(tot4,tot2, by = "pops")
+propmast_long$day.x <- NULL
+colnames(propmast_long)[3]<-"day"
+propmast_long$prop_alive<-propmast_long$total2/propmast_long$total_d28### data frame by sex
+propmast_long[, ncol(propmast_long)][propmast_long[, ncol(propmast_long)] == 0] <- NA
+
+
+ggplot(propmast_long, aes(x=day,y=prop_alive,color=pops))+
+  geom_vline(xintercept = c(49,56, 105, 112), linetype="dashed", alpha=0.5)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("All")
+
+
+ggplot(propmast_long_sex, aes(x=day,y=prop_alive,color=sex))+
+  #geom_vline(xintercept = c(49,56, 105, 112), linetype="dashed", alpha=0.5)+
+  geom_point(size=2)+
+  geom_line()+
+  facet_wrap(~pops)+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("sex")))+
+  theme(text=element_text(face="bold", size=15))+
+  ggtitle("All")
+
+```
+
+
+```{r survival plots with usable, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+tot1 <-
+    dat %>% filter(usability=="usable") %>%
+      group_by(day,pops,sex)  %>%
+        summarise(total=sum(na.omit(num_alive)))
+
+tot2 <-
+  dat %>% filter(usability=="usable") %>%
+    group_by(day,pops) %>%
+      summarise(total2=sum(na.omit(num_alive)))
+
+tot3<-tot1[tot1$day==28,]
+colnames(tot3)[4]<-"total_d28"
+
+propmast_long_sex<-merge(tot3,tot1, by = c("sex", "pops"))
+propmast_long_sex$day.x <- NULL
+colnames(propmast_long_sex)[4]<-"day"
+propmast_long_sex$prop_alive<-propmast_long_sex$total/propmast_long_sex$total_d28 ### data frame by sex
+propmast_long_sex[, ncol(propmast_long_sex)][propmast_long_sex[, ncol(propmast_long_sex)] == 0] <- NA
+
+tot4<-tot2[tot2$day==28,]
+colnames(tot4)[3]<-"total_d28"
+
+propmast_long<-merge(tot4,tot2, by = "pops")
+propmast_long$day.x <- NULL
+colnames(propmast_long)[3]<-"day"
+propmast_long$prop_alive<-propmast_long$total2/propmast_long$total_d28### data frame by sex
+propmast_long[, ncol(propmast_long)][propmast_long[, ncol(propmast_long)] == 0] <- NA
+
+
+ggplot(propmast_long, aes(x=day,y=prop_alive,color=pops))+
+  geom_vline(xintercept = c(49,56, 105, 112), linetype="dashed", alpha=0.5)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("Usable")
+
+
+ggplot(propmast_long_sex, aes(x=day,y=prop_alive,color=sex))+
+  geom_vline(xintercept = c(49,56, 105, 112), linetype="dashed", alpha=0.5)+
+  geom_point(size=2)+
+  geom_line()+
+  facet_wrap(~pops)+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  #ylim(c(0,1))+
+  guides(color=guide_legend(title=c("sex")))+
+  theme(text=element_text(face="bold", size=15))+
+  ggtitle("Usable")
+
+```
+
+
+```{r survival plots with variation due to family, echo=FALSE, message=FALSE, warning=FALSE}
+tot1 <-
+  dat %>% 
+  group_by(day,sex,cross)  %>%
+  summarise(total=sum(na.omit(num_alive)))
+
+tot3<-tot1[tot1$day==28,]
+colnames(tot3)[4]<-"total_d28"
+
+propmast_long_sex<-merge(tot3,tot1, by = c("sex", "cross")) %>% arrange(sex, cross, day.y)
+propmast_long_sex$day.x <- NULL
+colnames(propmast_long_sex)[4]<-"day"
+propmast_long_sex$prop_alive<-propmast_long_sex$total/propmast_long_sex$total_d28 ### data frame by sex
+propmast_long_sex[, ncol(propmast_long_sex)][propmast_long_sex[, ncol(propmast_long_sex)] == 0] <- 0
+
+propmast_long_sex$pops <- substr(propmast_long_sex$cross,0,2)
+tmp<- na.omit(propmast_long_sex)
+
+propmast_clutch <-
+  tmp %>% group_by(pops, day) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(subset(propmast_clutch), aes(x=day,y=mean_prop,color=pops))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  #geom_vline(xintercept = c(49,56, 105, 112), linetype="dashed", alpha=0.5)+
+  geom_point(size=2)+
+  theme_linedraw() +
+  geom_line() +
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0.0000001,1))+
+  guides(color=guide_legend(title=c("Cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("All")
+
+propmast_clutch_sex <-
+  tmp %>% group_by(pops, day, sex) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(subset(propmast_clutch_sex), aes(x=day,y=mean_prop,color=sex))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  #geom_vline(xintercept = c(49,56, 105, 112), linetype="dashed", alpha=0.5)+
+  theme_linedraw() +
+  geom_point(size=2) +
+  geom_line() +
+  ylab("Proportion Alive") +
+  xlab("Day") +
+  ylim(c(0.0000001,1)) +
+  guides(color=guide_legend(title=c("Sex"))) +
+  theme(text=element_text(face="bold", size=20),
+        strip.background =element_rect(fill="white"))+
+  theme(strip.text = element_text(colour = 'black')) +
+  facet_wrap(~pops) +
+  ggtitle("All")
+
+
+```
+
+
+```{r survival plots with variation due to family with usable, echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+tot1 <-
+  dat %>% filter(usability=="usable") %>%
+     group_by(day,sex,cross)  %>%
+      summarise(total=sum(na.omit(num_alive)))
+
+tot3<-tot1[tot1$day==28,]
+colnames(tot3)[4]<-"total_d28"
+
+propmast_long_sex<-merge(tot3,tot1, by = c("sex", "cross"))
+propmast_long_sex$day.x <- NULL
+colnames(propmast_long_sex)[4]<-"day"
+propmast_long_sex$prop_alive<-propmast_long_sex$total/propmast_long_sex$total_d28 ### data frame by sex
+propmast_long_sex[, ncol(propmast_long_sex)][propmast_long_sex[, ncol(propmast_long_sex)] == 0] <- 0
+
+propmast_long_sex$pops <- substr(propmast_long_sex$cross,0,2)
+tmp<- na.omit(propmast_long_sex)
+
+propmast_clutch <-
+  tmp %>% group_by(pops, day) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(subset(propmast_clutch), aes(x=day,y=mean_prop,color=pops))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_vline(xintercept = c(49,56, 105, 112), linetype="dashed", alpha=0.5)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0.0000001,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("Usable")
+
+propmast_clutch_sex <-
+  tmp %>% group_by(pops, day, sex) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(subset(propmast_clutch_sex), aes(x=day,y=mean_prop,color=sex))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  #geom_vline(xintercept = c(49,56, 105, 112), linetype="dashed", alpha=0.5)+
+  theme_linedraw() +
+  geom_point(size=2) +
+  geom_line() +
+  ylab("Proportion Alive") +
+  xlab("Day") +
+  ylim(c(0.0000001,1)) +
+  guides(color=guide_legend(title=c("Sex"))) +
+  theme(text=element_text(face="bold", size=20),
+        strip.background =element_rect(fill="white"))+
+  theme(strip.text = element_text(colour = 'black')) +
+  facet_wrap(~pops) +
+  ggtitle("Usable")
+
+
+```
+
+
+```{r how about breaking the data into two part for sampling periods with all, echo=F, message=FALSE, warning=FALSE, include=FALSE, eval=FALSE}
+dat_28 <- subset(dat, day<49)
+
+tot1 <-
+  dat_28 %>% 
+     group_by(day,sex,cross)  %>%
+      summarise(total=sum(na.omit(num_alive))) %>%
+        filter(total!=0)
+
+tot3<-tot1[tot1$day==28,]
+colnames(tot3)[4]<-"total_d28"
+
+propmast_long_sex<-merge(tot3,tot1, by = c("sex", "cross"))
+propmast_long_sex$day.x <- NULL
+colnames(propmast_long_sex)[4]<-"day"
+propmast_long_sex$prop_alive<-propmast_long_sex$total/propmast_long_sex$total_d28 ### data frame by sex
+propmast_long_sex[, ncol(propmast_long_sex)][propmast_long_sex[, ncol(propmast_long_sex)] == 0] <- NA
+
+propmast_long_sex$pops <- substr(propmast_long_sex$cross,0,2)
+tmp<- na.omit(propmast_long_sex)
+
+
+propmast_clutch <-
+  tmp %>% group_by(pops, day) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(propmast_clutch, aes(x=day,y=mean_prop,color=pops))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("All")
+
+propmast_clutch_sex <-
+  tmp %>% group_by(pops, day, sex) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(propmast_clutch_sex, aes(x=day,y=mean_prop,color=sex))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  facet_wrap(~pops)+
+  ggtitle("All")
+
+
+dat_56 <- subset(dat, day>49 & day<104)
+
+tot1 <-
+  dat_56 %>%
+     group_by(day,sex,cross)  %>%
+      summarise(total=sum(na.omit(num_alive))) %>%
+        filter(total!=0)
+
+tot3<-tot1[tot1$day==56,]
+colnames(tot3)[4]<-"total_d28"
+
+propmast_long_sex<-merge(tot3,tot1, by = c("sex", "cross"))
+propmast_long_sex$day.x <- NULL
+colnames(propmast_long_sex)[4]<-"day"
+propmast_long_sex$prop_alive<-propmast_long_sex$total/propmast_long_sex$total_d28 ### data frame by sex
+propmast_long_sex[, ncol(propmast_long_sex)][propmast_long_sex[, ncol(propmast_long_sex)] == 0] <- NA
+
+propmast_long_sex$pops <- substr(propmast_long_sex$cross,0,2)
+tmp<- na.omit(propmast_long_sex)
+
+
+propmast_clutch <-
+  tmp %>% group_by(pops, day) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(propmast_clutch, aes(x=day,y=mean_prop,color=pops))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("All")
+
+propmast_clutch_sex <-
+  tmp %>% group_by(pops, day, sex) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(propmast_clutch_sex, aes(x=day,y=mean_prop,color=sex))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  facet_wrap(~pops)+
+  ggtitle("All")
+
+
+```
+
+
+```{r how about breaking the data into two part for sampling periods with usable, echo=F, message=FALSE, warning=FALSE, include=FALSE, eval=FALSE}
+dat_28 <- subset(dat, day<49)
+
+tot1 <-
+  dat_28 %>% filter(usability=="usable") %>%
+     group_by(day,sex,cross)  %>%
+      summarise(total=sum(na.omit(num_alive))) %>%
+        filter(total!=0)
+
+tot3<-tot1[tot1$day==28,]
+colnames(tot3)[4]<-"total_d28"
+
+propmast_long_sex<-merge(tot3,tot1, by = c("sex", "cross"))
+propmast_long_sex$day.x <- NULL
+colnames(propmast_long_sex)[4]<-"day"
+propmast_long_sex$prop_alive<-propmast_long_sex$total/propmast_long_sex$total_d28 ### data frame by sex
+propmast_long_sex[, ncol(propmast_long_sex)][propmast_long_sex[, ncol(propmast_long_sex)] == 0] <- NA
+
+propmast_long_sex$pops <- substr(propmast_long_sex$cross,0,2)
+tmp<- na.omit(propmast_long_sex)
+
+
+propmast_clutch <-
+  tmp %>% group_by(pops, day) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(propmast_clutch, aes(x=day,y=mean_prop,color=pops))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("Usable")
+
+propmast_clutch_sex <-
+  tmp %>% group_by(pops, day, sex) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(propmast_clutch_sex, aes(x=day,y=mean_prop,color=sex))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  facet_wrap(~pops)+
+  ggtitle("Usable")
+
+
+dat_56 <- subset(dat, day>49 & day<104)
+
+tot1 <-
+  dat_56 %>% filter(usability=="usable") %>%
+     group_by(day,sex,cross)  %>%
+      summarise(total=sum(na.omit(num_alive))) %>%
+        filter(total!=0)
+
+tot3<-tot1[tot1$day==56,]
+colnames(tot3)[4]<-"total_d28"
+
+propmast_long_sex<-merge(tot3,tot1, by = c("sex", "cross"))
+propmast_long_sex$day.x <- NULL
+colnames(propmast_long_sex)[4]<-"day"
+propmast_long_sex$prop_alive<-propmast_long_sex$total/propmast_long_sex$total_d28 ### data frame by sex
+propmast_long_sex[, ncol(propmast_long_sex)][propmast_long_sex[, ncol(propmast_long_sex)] == 0] <- NA
+
+propmast_long_sex$pops <- substr(propmast_long_sex$cross,0,2)
+tmp<- na.omit(propmast_long_sex)
+
+
+propmast_clutch <-
+  tmp %>% group_by(pops, day) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(propmast_clutch, aes(x=day,y=mean_prop,color=pops))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  ggtitle("Usable")
+
+propmast_clutch_sex <-
+  tmp %>% group_by(pops, day, sex) %>% summarise(mean_prop=mean(prop_alive), std=std(prop_alive)) 
+
+ggplot(propmast_clutch_sex, aes(x=day,y=mean_prop,color=sex))+
+  geom_errorbar(aes(ymin=mean_prop-std, ymax=mean_prop+std), width=.1)+
+  geom_point(size=2)+
+  geom_line()+
+  ylab("Proportion Alive")+
+  xlab("Day")+
+  ylim(c(0,1))+
+  guides(color=guide_legend(title=c("cross")))+
+  theme(text=element_text(face="bold", size=20))+
+  facet_wrap(~pops)+
+  ggtitle("Usable")
+
+
+```
+
+
+```{r sex specific max longevity, echo=F}
+
+long <- datmast_use %>% group_by(cross, clutch, sex) %>% filter(num_alive==0) %>% summarise(max_longevity= min(day))
+long$pops <- substr(long$cross,start = 0,stop = 2)
+long$parental <- ifelse(long$pops == "FF" , "Parental", "Hybrid")
+long$parental <- ifelse(long$pops == "SS" , "Parental", long$parental)
+
+ggplot(long, aes(x = pops, y = max_longevity, fill = sex)) +
+  geom_boxplot() +
+  theme_linedraw() +
+  ylab("Max Longevity") +
+  xlab("Cross") +
+  guides(color=guide_legend(title=c("Sex"))) +
+  theme(text=element_text(face="bold", size=20))
+
+ggplot(long, aes(x = parental, y = max_longevity, fill = parental)) +
+  geom_boxplot(fill=c("#E69F00", "#56B4E9"), color="black") +  
+  geom_signif(comparisons = list(c("Parental","Hybrid")), map_signif_level = FALSE, position = "identity", textsize = 5) + 
+  theme_linedraw() +
+  ylab("Max Longevity") +
+  xlab("Cross") +
+  ylim(c(0,280))+
+  guides(fill=FALSE) +
+  theme(text=element_text(face="bold", size=20))
+
+ ggplot(long, aes(x = parental, y = max_longevity, fill = sex)) +
+  geom_boxplot(color="black") +
+  theme_linedraw() +
+  ylab("Max Longevity") +  
+  xlab("Cross") +
+  guides(fill=FALSE, color = guide_legend(title=c("Sex"))) +
+  theme(text=element_text(face="bold", size=20))
+
+summary(aov(max_longevity~sex*pops, data = long))
+TukeyHSD(aov(max_longevity~sex*pops, data = long))
+
+sf_max <- subset(long, parental=="SF")$max_longevity
+fs_max <- subset(long, parental=="FS")$max_longevity
+p_max <- subset(long, parental=="Parental")$max_longevity
+
+fit <- aov(max_longevity ~ parental * sex, data=long)
+summary(fit)
+TukeyHSD(fit)
+```
+
+
+
+```{r coorelation of max and fe}
+colnames(fe_dat)[1] <- "cross"
+cl1 <- abs(fe_dat$cl1_hatch_day - fe_dat$cl1_fe_day)
+cl2 <- abs(fe_dat$cl2_hatch_day - fe_dat$cl2_fe_day) 
+cl3 <- abs(fe_dat$cl3_hatch_day - fe_dat$cl3_fe_day)
+
+dfa <- data.frame(dev = c(cl1,cl2, cl3),
+                  clutch = c(rep(1,length(cl1)), rep(2, length(cl2)), rep(3, length(cl3))),
+                  cross = rep(fe_dat$cross, 3)
+                  )
+
+long$max_longevity <- as.integer(long$max_longevity)
+
+tmp1 <- full_join(long, dfa, by = c("cross", "clutch"))
+datmast2 <- full_join(datmast, tmp1, by = c("cross", "clutch"))
+datmast2$pops <- substr(datmast2$cross,1,2)
+
+ggplot(na.omit(datmast2), aes(x = dev, y = max_longevity)) +
+  geom_smooth(method = "lm") +
+  geom_point(aes(color = pops)) +
+  theme_linedraw() +
+  xlab("Development Time") +
+  ylab("Max Longevity") +
+  theme(text=element_text(face="bold", size=20)) +
+  guides(color=guide_legend(title=c("Cross"))) 
+
+
+
+fit <- lm(max_longevity~dev , na.omit(datmast2))
+summary(fit)
+
+cor.test(datmast2$max_longevity, datmast2$dev, method=c("pearson"))
+```
+
+
+```{r how many died from hatch to splitting correlation with sex ratio, include=T, echo=F}
+colnames(fe_dat)[1] <- "cross"
+cl1 <- fe_dat$cl1_num
+cl2 <- fe_dat$cl2_num
+cl3 <- fe_dat$cl3_num
+
+dfa <- data.frame(num_hatched = c(cl1,cl2, cl3),
+                  clutch = c(rep(1,length(cl1)), rep(2, length(cl2)), rep(3, length(cl3))),
+                  cross = rep(fe_dat$cross, 3)
+                  )
+
+datmast_sexsum <- datmast_use %>% filter(day == 28) %>% group_by(clutch, cross) %>%
+  summarise(tot_num_alive = sum(num_alive), prop_f = (num_alive[2] / sum(num_alive)))
+
+tmp1 <- full_join(datmast_sexsum, dfa, by = c("cross", "clutch"))
+tmp1$pops <- substr(tmp1$cross, 1, 2)
+tmp1$diff = with(tmp1, num_hatched-tot_num_alive)
+tmp1 <- filter(tmp1, diff >= 0 )
+
+ggplot(tmp1, aes(x=diff, y = prop_f)) +
+  geom_point(aes(color = pops)) +
+  #geom_smooth(method = "lm") +
+  theme_linedraw() +
+  xlab("Death in First 28 Days") +
+  ylab("Family Sex Ratio") +
+  theme(text=element_text(face="bold", size=20)) +
+  guides(color=guide_legend(title=c("Cross"))) 
+
+summary(lm(diff~prop_f, data = subset(tmp1, pops == "SS")))
+
+```
+
+
+
+## Statistics CPH & K-M
+
+```{r coxph and K-M, include=T, echo=F}
+tmp <- NULL
+tmp1 <- NULL
+tmp2 <- NULL
+tmp3 <- NULL
+tmp4 <- NULL
+for (i in unique(datmast_use$cross)){ ### creates a data frame with ecah indivudal in a single row
+  clt <- datmast_use %>% filter(cross==i) %>% group_by(day, sex) %>% summarise(num_alive=sum(num_alive))
+    for (k in 1:2){
+      soi <- unique(datmast_use$sex)[k]
+      clt_sex <- clt %>% filter(sex==soi)  %>% arrange(day)
+        for (j in 1:nrow(clt_sex)){
+          if(j==1) next
+          day<-clt_sex$day[j]
+          tot_alive <- clt_sex$num_alive[1]
+          if(tot_alive==0){
+            print("breaking")
+            break
+            }else
+          diff <- clt_sex$num_alive[j - 1] - clt_sex$num_alive[j]
+          if(diff==0) next
+          vec <- c(rep(TRUE, diff))
+          tmp <- data.frame(rep(i,diff), rep(1:diff), rep(day, diff), rep(soi, diff))
+          colnames(tmp)<- c("cross","individual","Ri","sex")
+          tmp$Li <- tmp$Ri - 7
+          tmp2<-rbind(tmp2,tmp)
+      }
+      tmp3<-rbind(tmp3,tmp2)
+    }
+  tmp4<-rbind(tmp4,tmp3)
+}
+
+tmp4$pops <- substr(tmp4$cross,start = 0,stop = 2)
+summary(as.numeric(subset(tmp4, pops=="FF")$Ri))
+
+
+km2 <- with(tmp4, Surv(Li, Ri, type = "interval2")) # interval with (,]. I think this is correct
+
+tmp11 <- survfit(km2 ~ pops, data=tmp4)
+summary(tmp11)
+
+tmp12 <- survfit(km2 ~ pops + sex, data=tmp4)
+summary(tmp12)
+
+ggsurvplot(tmp11, data = tmp4,  main = "Survival curve",
+           conf.int = TRUE,
+    font.main = c(20, "bold", "black"),
+    font.x = c(20, "bold", "black"),
+    font.y = c(20, "bold", "black"),
+    font.tickslab = c(12, "plain", "black"),
+    ggtheme = theme_linedraw(),
+    legend = "none") +
+  xlab("Day")
+
+ggsurvplot(tmp12, data = tmp4,  main = "Survival curve",
+           conf.int = TRUE,
+    font.main = c(20, "bold", "black"),
+    font.x = c(20, "bold", "black"),
+    font.y = c(20, "bold", "black"),
+    font.tickslab = c(12, "plain", "black"),
+    facet.by = "pops") +
+  theme_linedraw() +
+  xlab("Day") +
+  guides(color=guide_legend(title=c("Sex"))) +
+  theme(text=element_text(face="bold", size=20),
+        strip.background =element_rect(fill="white"))+
+  theme(strip.text = element_text(colour = 'black')) +
+  theme(legend.position="none") +
+  facet_wrap(~pops) # maybe an error here becuase FS females don't start at 0. It is becasuse we have interval censored data. If an animial died within the week it assumes it died mid-week. 
+
+
+  
+
+```
+
+The surviorsip plots here using the km model and the porportion alive above likely don't agree becasue the first shot took the mean from each family and the variation was due to family. :)
